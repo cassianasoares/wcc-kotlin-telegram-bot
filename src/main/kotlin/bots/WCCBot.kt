@@ -1,7 +1,13 @@
 package bots
 
-import bots.Constant.TOKEN_BOT
+import bots.Constants.URL_WHAT_GIF
+import bots.Constants.URL_YES_GIF
+import bots.Constants.errorData
+import bots.Constants.startCreate
+import bots.Constants.unknownCommand
+import bots.Constants.welcomeMessage
 import com.vdurmont.emoji.EmojiParser
+import config.ConfigManager
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.telegram.telegrambots.bots.TelegramLongPollingBot
@@ -11,57 +17,37 @@ import org.telegram.telegrambots.meta.api.methods.send.SendMessage
 import org.telegram.telegrambots.meta.api.objects.InputFile
 import org.telegram.telegrambots.meta.api.objects.Update
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException
-import poi.Sheet.updateSheet
+import poi.Spreadsheet.updateSheet
 import java.io.File
+import java.util.regex.Pattern
+
+enum class MessageStatus{
+    START, CREATE, UNKNOWN, FINISH
+}
 
 class WCCBot : TelegramLongPollingBot() {
 
-    private val welcomeMessage = """
-       *Olá, tudo bem\?*
-       Bem\-vindo ao Future Millionaire
-       
-       \/start \- começar
-       \/create \- criar planilha da riqueza
-    """.trimIndent()
-    private val incomeMessage = """
-        Digite o valor total das suas rendas
-        
-        Escreva como no exemplo - Substitua a virgula por ponto:
-        
-        Renda = 2870.0 
-    """.trimIndent()
-    private val expenditureMessage = """
-        Digite o valor total das suas Despesas
-        
-        Escreva como no exemplo - Substitua a virgula por ponto:
-        
-        Despesas = 2870.0 
-    """.trimIndent()
-    private val billsMessage = """
-        Digite o valor total das suas dividas vencidas
-        
-        Escreva como no exemplo - Substitua a virgula por ponto:
-        
-        Dividas = 2870.0 
-    """.trimIndent()
-
     private val sendDocument = SendDocument()
     private val sendMessage = SendMessage()
-    private val dataList = arrayListOf<Double>()
+    val dataList = arrayListOf<Double>()
 
     private val log: Logger = LoggerFactory.getLogger("bot")
+
+    private var messageType = MessageStatus.START
+
+    //get new sheet created
+    private val file = File("src/main/resources/personal_finance.xlsx")
 
 
     override fun getBotUsername(): String {
         //return bot username
         // If bot username is @HelloKotlinBot, it must return
-        return "Future Millionaire Bot"
+        return ConfigManager.getKey("TOKEN_NAME")
     }
 
     override fun getBotToken(): String {
         // Return bot token from BotFather
-
-        return TOKEN_BOT
+        return ConfigManager.getKey("TOKEN_BOT")
     }
 
     override fun onUpdateReceived(update: Update?) {
@@ -71,67 +57,65 @@ class WCCBot : TelegramLongPollingBot() {
         val chatId = update?.message?.chatId.toString() // to know for whom send the message
         val messageCommand = update?.message?.text?.lowercase()?.replace(" ", "")
 
-        val message = convertMessage(messageCommand)
-        //Pegando a nova planilha que será criada
-        val file = File("./planilha_financeira.xlsx")
+        changeMessageStatus(messageCommand!!)
 
-        log.info(message)
+        log.info(messageCommand)
+        log.info(messageType.toString())
 
         try {
 
-            when (message) {
-                "/start" -> {
+            when (messageType) {
+                MessageStatus.START -> {
                     sendDocument.apply {
                         this.chatId = chatId
                         this.caption = welcomeMessage
-                        this.document = InputFile().setMedia(File("src/main/resources/millionaire.gif"))
+                        this.document = InputFile().setMedia(URL_YES_GIF)
                         this.parseMode = "MarkdownV2"
                     }
                     execute(sendDocument)
                 }
-                "/create" -> {
+                MessageStatus.CREATE -> {
                     sendMessage.apply {
                         this.chatId = chatId
-                        this.text = incomeMessage
+                        this.text = startCreate
                     }
-                    execute(sendMessage)
-                }
-                "Income" -> {
-                    getDoubleValue(messageCommand)
-                    sendMessage.apply {
-                        this.chatId = chatId
-                        this.text = expenditureMessage
-                    }
-                    execute(sendMessage)
-                }
-                "Expenditure" ->{
-                    getDoubleValue(messageCommand)
-                    sendMessage.apply {
-                        this.chatId = chatId
-                        this.text = billsMessage
-                    }
-                    execute(sendMessage)
-                }
-                "Bills" -> {
-                    getDoubleValue(messageCommand)
-                    updateSheet(nameSender!!, dataList[0], dataList[1], dataList[2])
 
-                    sendDocument.apply {
-                        this.chatId = chatId
-                        this.caption = EmojiParser.parseToUnicode("Sua planilha, $nameSender :blush:")
-                        this.document = InputFile().setMedia(file)
-                        this.parseMode = "MarkdownV2"
+                    execute(sendMessage)
+                    messageType = MessageStatus.FINISH
+                }
+                MessageStatus.FINISH-> {
+                    if(isDataListFull(messageCommand)){
+                        updateSheet(nameSender!!, dataList[0], dataList[1], dataList[2])
+
+                        sendDocument.apply {
+                            this.chatId = chatId
+                            this.caption = EmojiParser.parseToUnicode("Sua planilha, $nameSender :blush:")
+                            this.document = InputFile().setMedia(file)
+                            this.parseMode = "MarkdownV2"
+                        }
+                        execute(sendDocument)
+
+                        //delete file after send
+                        file.delete()
+                        log.info("delete temp file")
+
+                        messageType = MessageStatus.START
+                    }else{
+                        sendMessage.apply {
+                            this.chatId = chatId
+                            this.text = errorData
+                        }
+
+                        execute(sendMessage)
                     }
-                    execute(sendDocument)
-                    //excluindo planilha com os dados do user que a pediu apos envia-la
-                    file.delete()
-                    log.info("delete temp file")
                 }
                 else -> {
                     sendDocument.apply {
                         this.chatId = chatId
-                        this.caption = EmojiParser.parseToUnicode("Acho que eu não entendi :sad: Vamos recomeçar /start")
-                        this.document = InputFile().setMedia(File("src/main/resources/what.gif"))
+                        this.caption =
+                            EmojiParser.parseToUnicode(unknownCommand)
+                        this.document = InputFile().setMedia(URL_WHAT_GIF)
+                        this.parseMode = "MarkdownV2"
                     }
                     execute(sendDocument)
                 }
@@ -142,35 +126,44 @@ class WCCBot : TelegramLongPollingBot() {
         }
     }
 
-    private fun convertMessage(message: String?): String{
-        return when{
-            message!!.contains("/") -> message
-            message.contains("=") ->  {
-                when {
-                    message.contains("renda=") -> "Income"
-                    message.contains("despesas=") -> "Expenditure"
-                    message.contains("dividas=") -> "Bills"
-                    else -> ""
+
+    private fun changeMessageStatus(message: String?){
+        messageType = when(message!!) {
+            "/start" -> MessageStatus.START
+            "/create" -> MessageStatus.CREATE
+            else -> {
+                if(messageType != MessageStatus.FINISH){
+                    MessageStatus.UNKNOWN
+                }else{
+                    MessageStatus.FINISH
                 }
-            }else -> ""
+            }
         }
     }
 
-    private fun getDoubleValue(text: String?) {
-        log.info(text)
 
-        //pega tudo que esta depois do "="
-        val number =  text!!.split("=")[1]
+    fun isNumber(text: String): Boolean{
+        val decimalPattern = "([0-9]*)\\.([0-9]*)"
+        return Pattern.matches(decimalPattern, text)
+    }
 
+    fun convertTextToNumber(text: String?): List<String>{
+       //create a list with each element before and after "-"
+       return text!!.replace(",",".").split("-")
+    }
 
-        //dataList só pode ter 3 valores (renda, despesas, dividas)
-        if(number.isNotEmpty() && dataList.size <= 3){
-            log.info(number)
-            dataList.add( number.toDouble() )
-        } else if(number.isEmpty() && dataList.size <= 3){
-            dataList.add(0.0)
+    fun isDataListFull(text: String?): Boolean{
+
+        dataList.clear()
+
+        convertTextToNumber(text).forEach { value ->
+            if(isNumber(value) && dataList.size < 3) {
+                log.info(text.toString())
+                dataList.add(value.toDouble())
+            }
         }
 
+        return dataList.size == 3
     }
 
 }
