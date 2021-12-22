@@ -9,8 +9,8 @@ A telegram bot with kotlin that generate a personal financial spreadsheet.
 
 # System Requirements
 
-Telegram Bot API
-Apache POI
+- Telegram Bot API
+- Apache POI
 
 
 # GuideLine
